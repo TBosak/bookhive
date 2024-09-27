@@ -1,0 +1,4 @@
+# deps
+node_modules/
+src/data/books.json
+src/data/ratings.json
