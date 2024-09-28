@@ -197,7 +197,11 @@ app.get('/books', async (ctx: any) => {
   return ctx.json(books.map((book) => book.Title));
 });
 
+app.get('/privacy-policy', async (ctx) => {
+  return ctx.json({ message: 'This is the privacy policy, we store no data' });
+});
+
 export default {
-  port: 4200,
+  port: 8000,
   fetch: app.fetch,
 };
