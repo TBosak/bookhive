@@ -33,7 +33,14 @@ const app = new Hono();
 
 app.get('/book', async (ctx) => {
   const title = ctx.req.query('title');
-  const books = [...books_1 as Book[], ...books_2 as Book[], ...books_3 as Book[], ...books_4 as Book[], ...books_5 as Book[], ...books_6 as Book[]].flat();
+  const books = [
+    ...(books_1 as Book[]),
+    ...(books_2 as Book[]),
+    ...(books_3 as Book[]),
+    ...(books_4 as Book[]),
+    ...(books_5 as Book[]),
+    ...(books_6 as Book[]),
+  ];
   const result = books.find((book) => book.Title === title);
   console.log(result);
   return ctx.json(result);
@@ -41,17 +48,60 @@ app.get('/book', async (ctx) => {
 
 app.get('/recommend', async (ctx) => {
   // Accept lists of titles, authors, and years from the query parameters
-  const titleList = ctx.req.queries('title') || [];
-  const authorList = ctx.req.queries('author') || [];
-  const yearList = ctx.req.queries('year') || [];
+  const titlesParam = ctx.req.query('titles');
+  let titleList: string[] = [];
+
+  if (titlesParam) {
+    titleList = titlesParam.split(';').map((t) => decodeURIComponent(t.trim()));
+  } else {
+    // Fallback to the existing method
+    titleList = ctx.req.queries('title') || [];
+  }
+
+  const authorsParam = ctx.req.query('authors');
+  let authorList: string[] = [];
+
+  if (authorsParam) {
+    authorList = authorsParam.split(';').map((a) => decodeURIComponent(a.trim()));
+  } else {
+    authorList = ctx.req.queries('author') || [];
+  }
+
+  const yearsParam = ctx.req.query('years');
+  let yearList: string[] = [];
+
+  if (yearsParam) {
+    yearList = yearsParam.split(';').map((y) => decodeURIComponent(y.trim()));
+  } else {
+    yearList = ctx.req.queries('year') || [];
+  }
 
   if (titleList.length === 0 && authorList.length === 0 && yearList.length === 0) {
     return ctx.json({ error: "At least one 'title', 'author', or 'year' query parameter is required" }, 400);
   }
 
-  const books = [...books_1 as Book[], ...books_2 as Book[], ...books_3 as Book[], ...books_4 as Book[], ...books_5 as Book[], ...books_6 as Book[]].flat();
-  const ratings = [...ratings_1 as Rating[], ...ratings_2 as Rating[], ...ratings_3 as Rating[], ...ratings_4 as Rating[], ...ratings_5 as Rating[], ...ratings_6 as Rating[]].flat();
+  // Logging parsed values
+    console.log('Title List:', titleList);
+    console.log('Author List:', authorList);
+    console.log('Year List:', yearList);
 
+  const books = [
+    ...(books_1 as Book[]),
+    ...(books_2 as Book[]),
+    ...(books_3 as Book[]),
+    ...(books_4 as Book[]),
+    ...(books_5 as Book[]),
+    ...(books_6 as Book[]),
+  ];
+  
+  const ratings = [
+    ...(ratings_1 as Rating[]),
+    ...(ratings_2 as Rating[]),
+    ...(ratings_3 as Rating[]),
+    ...(ratings_4 as Rating[]),
+    ...(ratings_5 as Rating[]),
+    ...(ratings_6 as Rating[]),
+  ];
   // Build the target set of ISBNs based on the provided query parameters
   const targetISBNs = new Set<string>();
 
@@ -72,26 +122,27 @@ app.get('/recommend', async (ctx) => {
     });
   }
 
-  // Map authors to ISBNs
-  if (authorList.length > 0) {
-    const authorToISBNsMap = new Map<string, Set<string>>();
-    books.forEach((book) => {
-      const author = book.Author.toLowerCase();
-      if (!authorToISBNsMap.has(author)) {
-        authorToISBNsMap.set(author, new Set());
-      }
-      authorToISBNsMap.get(author)?.add(book.ISBN);
-    });
+// Map authors to ISBNs
+if (authorList.length > 0) {
+  const authorToISBNsMap = new Map<string, Set<string>>();
+  books.forEach((book) => {
+    const author = normalizeAuthorName(book.Author);
+    if (!authorToISBNsMap.has(author)) {
+      authorToISBNsMap.set(author, new Set());
+    }
+    authorToISBNsMap.get(author)?.add(book.ISBN);
+  });
 
-    authorList.forEach((author: string) => {
-      const isbns = authorToISBNsMap.get(author.toLowerCase());
-      if (isbns) {
-        isbns.forEach((isbn) => targetISBNs.add(isbn));
-      } else {
-        console.warn(`Author not found: ${author}`);
-      }
-    });
-  }
+  authorList.forEach((author: string) => {
+    const normalizedAuthor = normalizeAuthorName(author);
+    const isbns = authorToISBNsMap.get(normalizedAuthor);
+    if (isbns) {
+      isbns.forEach((isbn) => targetISBNs.add(isbn));
+    } else {
+      console.warn(`Author not found: ${author}`);
+    }
+  });
+}
 
   // Map years to ISBNs (considering the same decade)
   if (yearList.length > 0) {
@@ -99,9 +150,10 @@ app.get('/recommend', async (ctx) => {
       const year = parseInt(yearStr);
       return Math.floor(year / 10) * 10;
     });
-
+  
     books.forEach((book) => {
-      const bookDecade = Math.floor(book.Year / 10) * 10;
+      const bookYear = parseInt(book.Year as any);
+      const bookDecade = Math.floor(bookYear / 10) * 10;
       if (targetDecades.includes(bookDecade)) {
         targetISBNs.add(book.ISBN);
       }
@@ -125,14 +177,23 @@ app.get('/recommend', async (ctx) => {
   // Target set of books is the set of ISBNs collected from the query parameters
   const targetBooks = targetISBNs;
 
-  // Compute Jaccard similarity between target books and each user's rated books
+  // Compute Jaccard similarity between target books and each user's highly-rated books
   const similarities: { userId: string; similarity: number }[] = [];
 
   for (const [userId, userRatings] of Object.entries(userRatingsMap)) {
-    const userBooks = new Set(userRatings.keys());
+    // Consider only books the user has rated highly
+    const userHighRatedBooks = new Set<string>();
+    userRatings.forEach((rating, isbn) => {
+      if (rating >= 4) {
+        userHighRatedBooks.add(isbn);
+      }
+    });
 
-    const intersectionSize = [...targetBooks].filter((isbn) => userBooks.has(isbn)).length;
-    const unionSize = new Set([...targetBooks, ...userBooks]).size;
+    // Skip users who have not rated any books highly
+    if (userHighRatedBooks.size === 0) continue;
+
+    const intersectionSize = [...targetBooks].filter((isbn) => userHighRatedBooks.has(isbn)).length;
+    const unionSize = new Set([...targetBooks, ...userHighRatedBooks]).size;
 
     const similarity = intersectionSize / unionSize;
 
@@ -149,57 +210,95 @@ app.get('/recommend', async (ctx) => {
   const topSimilarUsers = similarities.slice(0, topN);
 
   // Collect books that similar users have rated highly but are not in targetBooks
-  const recommendedBooks = new Set<string>();
+  // Keep track of how many similar users rated each book highly
+  const recommendedBooksMap: Map<string, { count: number; totalRating: number }> = new Map();
 
   topSimilarUsers.forEach(({ userId: similarUserId }) => {
     const similarUserRatings = userRatingsMap[similarUserId];
     similarUserRatings.forEach((rating, isbn) => {
-      if (!targetBooks.has(isbn) && rating >= 8) {
-        recommendedBooks.add(isbn);
+      if (!targetBooks.has(isbn) && rating >= 7) {
+        if (!recommendedBooksMap.has(isbn)) {
+          recommendedBooksMap.set(isbn, { count: 1, totalRating: rating });
+        } else {
+          const existing = recommendedBooksMap.get(isbn)!;
+          existing.count += 1;
+          existing.totalRating += rating;
+        }
       }
     });
   });
 
+  // Convert the recommendedBooksMap to an array and sort by count and average rating
+  const recommendedBooksArray = Array.from(recommendedBooksMap.entries())
+    .map(([isbn, data]) => ({
+      isbn,
+      count: data.count,
+      avgRating: data.totalRating / data.count,
+    }))
+    .sort((a, b) => {
+      // First sort by count (number of similar users who rated it highly)
+      if (b.count !== a.count) {
+        return b.count - a.count;
+      }
+      // Then sort by average rating
+      return b.avgRating - a.avgRating;
+    });
+
   // If the query included years, limit recommended books to the same decades
+  let filteredRecommendedBooksArray = recommendedBooksArray;
+
   if (yearList.length > 0) {
     const targetDecades = yearList.map((yearStr: string) => {
       const year = parseInt(yearStr);
       return Math.floor(year / 10) * 10;
     });
 
-    const filteredRecommendedBooks = new Set<string>();
-    recommendedBooks.forEach((isbn) => {
+    filteredRecommendedBooksArray = recommendedBooksArray.filter(({ isbn }) => {
       const book = books.find((b) => b.ISBN === isbn);
       if (book) {
-        const bookDecade = Math.floor(book.Year / 10) * 10;
-        if (targetDecades.includes(bookDecade)) {
-          filteredRecommendedBooks.add(isbn);
-        }
+        const bookYear = parseInt(book.Year as any);
+        const bookDecade = Math.floor(bookYear / 10) * 10;
+        return targetDecades.includes(bookDecade);
       }
+      return false;
     });
-    recommendedBooks.clear();
-    filteredRecommendedBooks.forEach((isbn) => recommendedBooks.add(isbn));
   }
 
-  // Convert the set to an array and limit to top M books (e.g., top 10)
-  const recommendedBooksArray = Array.from(recommendedBooks).slice(0, 10);
+  // Limit to top M books (e.g., top 10)
+  const topM = 10;
+  const finalRecommendedBooks = filteredRecommendedBooksArray.slice(0, topM);
 
   // Get book details from Books data
-  const recommendedBookDetails = books.filter((book) =>
-    recommendedBooksArray.includes(book.ISBN)
-  );
+  const recommendedBookDetails = finalRecommendedBooks.map(({ isbn }) =>
+    books.find((book) => book.ISBN === isbn)
+  ).filter(Boolean) as Book[];
 
   return ctx.json(recommendedBookDetails);
 });
 
 app.get('/books', async (ctx: any) => {
-  const books = [...books_1 as Book[], ...books_2 as Book[], ...books_3 as Book[], ...books_4 as Book[], ...books_5 as Book[], ...books_6 as Book[]].flat();
+  const books = [
+    ...(books_1 as Book[]),
+    ...(books_2 as Book[]),
+    ...(books_3 as Book[]),
+    ...(books_4 as Book[]),
+    ...(books_5 as Book[]),
+    ...(books_6 as Book[]),
+  ];
   return ctx.json(books.map((book) => book.Title));
 });
 
 app.get('/privacy-policy', async (ctx) => {
   return ctx.json({ message: 'This is the privacy policy, we store no data' });
 });
+
+app.get('/', async (ctx) => {
+  return ctx.json({ message: 'Healthy' });
+});
+
+function normalizeAuthorName(name: string): string {
+  return name.toLowerCase().trim().replace(/[^a-z0-9 ]/g, '');
+}
 
 export default {
   port: 8000,
