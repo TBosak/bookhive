@@ -2,7 +2,7 @@
   "name": "bookhive",
   "scripts": {
     "dev": "bun run --hot src/index.ts",
-    "build": "bun build src/index.ts"
+    "build": "bun build src/index.ts --out-dir=public"
   },
   "dependencies": {
     "hono": "^4.6.3"
